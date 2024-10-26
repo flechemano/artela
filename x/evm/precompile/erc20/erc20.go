@@ -123,6 +123,11 @@ func (c *ERC20Contract) handleRegister(ctx sdk.Context, proxy common.Address, _ 
 		return types.False32Byte, errors.New("invalid input denom")
 	}
 
+	prefix := "IBC/"
+	if !strings.HasPrefix(strings.ToUpper(denom), prefix) {
+		return types.False32Byte, errors.New("denom not valid")
+	}
+
 	if d := c.GetDenomByProxy(ctx, proxy); len(d) > 0 {
 		return types.False32Byte, errors.New("proxy has been registered")
 	}
