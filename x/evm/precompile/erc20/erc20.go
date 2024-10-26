@@ -35,6 +35,7 @@ type ERC20Contract struct {
 	tokenPairs types.TokenPairs // TODO cache the token pairs
 	bankKeeper evmtypes.BankKeeper
 	methods    map[string]APIMethod
+	proxyABI   abi.ABI
 }
 
 func InitERC20Contract(logger log.Logger, cdc codec.BinaryCodec, storeKey storetypes.StoreKey, bankKeeper evmtypes.BankKeeper) *ERC20Contract {
@@ -51,6 +52,12 @@ func InitERC20Contract(logger log.Logger, cdc codec.BinaryCodec, storeKey storet
 	contract.methods[types.Method_Transfer] = contract.handleTransfer
 
 	precompiled.RegisterPrecompiles(types.PrecompiledAddress, contract)
+
+	var err error
+	contract.proxyABI, err = abi.JSON(strings.NewReader(proxy.ERC20ProxyAbi))
+	if err != nil {
+		panic(err)
+	}
 	return contract
 }
 
@@ -83,17 +90,12 @@ func (c *ERC20Contract) Run(ctx context.Context, input []byte) ([]byte, error) {
 		return nil, errors.New("to address not valiad")
 	}
 
-	parsedABI, err := abi.JSON(strings.NewReader(proxy.ERC20ProxyAbi))
-	if err != nil {
-		return nil, err
-	}
-
 	var (
 		methodID  = input[:4]
 		inputData = input[4:]
 	)
 
-	method, err := parsedABI.MethodById(methodID)
+	method, err := c.proxyABI.MethodById(methodID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +140,7 @@ func (c *ERC20Contract) handleBalanceOf(ctx sdk.Context, proxy common.Address, _
 
 	denom, err := c.getDenom(ctx, proxy)
 	if err != nil {
-		return types.False32Byte, err
+		return nil, err
 	}
 
 	addr, ok := args["account"].(common.Address)
@@ -150,10 +152,12 @@ func (c *ERC20Contract) handleBalanceOf(ctx sdk.Context, proxy common.Address, _
 
 	coin := c.bankKeeper.GetBalance(ctx, accAddr, denom)
 	balance := coin.Amount.BigInt()
-	if balance == nil {
-		balance = big.NewInt(0)
+
+	packed, err := c.proxyABI.Methods[types.Method_BalanceOf].Outputs.Pack(balance)
+	if err != nil {
+		return nil, err
 	}
-	return balance.FillBytes(make([]byte, 32)), nil
+	return packed, nil
 }
 
 func (c *ERC20Contract) handleTransfer(ctx sdk.Context, proxy common.Address, caller common.Address, args map[string]interface{}) ([]byte, error) {
